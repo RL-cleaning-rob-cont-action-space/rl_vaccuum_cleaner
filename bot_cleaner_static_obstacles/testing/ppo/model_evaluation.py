@@ -4,7 +4,7 @@ import torch
 import numpy as np
 import time
 
-def evaluate(env, agent, episodes=3, model_path="final_model.pth", render=True):
+def evaluate(env, agent, episodes=3, model_path="./bot_cleaner_static_obstacles/models/ppo/final_model.pth", render=True):
     """
     Evaluate the trained PPO agent on the environment.
 
@@ -13,7 +13,7 @@ def evaluate(env, agent, episodes=3, model_path="final_model.pth", render=True):
         agent: The PPO agent
         episodes: Number of evaluation episodes
         model_path: Path to the saved model weights
-        render: Whether to render the environment
+        render: Whether to render the environment_
     """
     # Load the trained model
     agent.policy.load_state_dict(torch.load(model_path))
