@@ -1,4 +1,5 @@
 """SAC implementation for continuous vacuum cleaner environment."""
+
 from __future__ import annotations
 
 import random
@@ -11,11 +12,14 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch import optim
 
-from bot_cleaner_basic_coverage.environments.environment import ContinuousVacuumCleanerEnv
+from bot_cleaner_basic_coverage.environments.environment import (
+    ContinuousVacuumCleanerEnv,
+)
 
 
 class Transition(NamedTuple):
     """Experience transition tuple."""
+
     state: np.ndarray
     action: np.ndarray
     reward: float
@@ -25,6 +29,7 @@ class Transition(NamedTuple):
 
 class ReplayBuffer:
     """Experience replay buffer for off-policy learning."""
+
     def __init__(self, capacity: int) -> None:
         self.buffer = deque(maxlen=capacity)
 
@@ -49,6 +54,7 @@ class ReplayBuffer:
 
 class SACAgent:
     """Soft Actor-Critic agent implementation."""
+
     def __init__(
         self,
         state_dim: int,
@@ -150,14 +156,22 @@ class SACAgent:
         actions = torch.FloatTensor(np.array([t.action for t in batch])).to(
             self.device,
         )
-        rewards = torch.FloatTensor([t.reward for t in batch]).unsqueeze(-1).to(
-            self.device,
+        rewards = (
+            torch.FloatTensor([t.reward for t in batch])
+            .unsqueeze(-1)
+            .to(
+                self.device,
+            )
         )
         next_states = torch.FloatTensor(np.array([t.next_state for t in batch])).to(
             self.device,
         )
-        dones = torch.FloatTensor([t.done for t in batch]).unsqueeze(-1).to(
-            self.device,
+        dones = (
+            torch.FloatTensor([t.done for t in batch])
+            .unsqueeze(-1)
+            .to(
+                self.device,
+            )
         )
 
         # Critic update
@@ -198,7 +212,7 @@ class SACAgent:
         q2_pi = self.critic2(torch.cat([states, actions_pi], 1))
         q_pi = torch.min(q1_pi, q2_pi)
 
-        actor_loss = (self.alpha * normal.log_prob(z).sum(-1, keepdim=True) - q_pi)
+        actor_loss = self.alpha * normal.log_prob(z).sum(-1, keepdim=True) - q_pi
         actor_loss = actor_loss.mean()
 
         self.actor_optimizer.zero_grad()
@@ -206,9 +220,13 @@ class SACAgent:
         self.actor_optimizer.step()
 
         # Temperature update (FIXED)
-        alpha_loss = -(self.log_alpha *
-                    (normal.log_prob(z).sum(-1).detach() +  # Critical fix here
-                    self.target_entropy)).mean()
+        alpha_loss = -(
+            self.log_alpha
+            * (
+                normal.log_prob(z).sum(-1).detach()  # Critical fix here
+                + self.target_entropy
+            )
+        ).mean()
 
         self.alpha_optimizer.zero_grad()
         alpha_loss.backward()
@@ -226,13 +244,15 @@ class SACAgent:
             alpha_loss.item(),
         )
 
+
 def preprocess_observation(obs: dict[str, Any]) -> np.ndarray:
     """Flatten observation components."""
     return np.concatenate([obs["coverage"], obs["position"]])
 
+
 def train() -> None:
     """Main training loop."""
-    env = ContinuousVacuumCleanerEnv(size=5.0)
+    env = ContinuousVacuumCleanerEnv(size=10.0)
     state_dim = 50 * 50 + 3
     action_dim = env.action_space.shape[0]
     action_range = (env.action_space.low, env.action_space.high)
@@ -267,8 +287,12 @@ def train() -> None:
                     f"Alpha: {agent.alpha.item():.3f}",
                 )
     finally:
-        torch.save(agent.actor.state_dict(), "bot_cleaner_basic_coverage/models/sac/sac_cleaner_actor.pth")
+        torch.save(
+            agent.actor.state_dict(),
+            "bot_cleaner_basic_coverage/models/sac/sac_cleaner_actor.pth",
+        )
         env.close()
+
 
 if __name__ == "__main__":
     train()

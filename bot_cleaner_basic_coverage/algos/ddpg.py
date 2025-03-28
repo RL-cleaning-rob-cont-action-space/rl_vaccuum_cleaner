@@ -1,4 +1,4 @@
-import copy
+import random
 
 import numpy as np
 import torch
@@ -8,10 +8,9 @@ import torch.optim as optim
 
 
 class Actor(nn.Module):
-    def __init__(self, input_dim, output_dim):
+    def __init__(self):
         super().__init__()
 
-        # Coverage feature extraction
         self.conv_layers = nn.Sequential(
             nn.Conv2d(1, 64, 5, stride=2),
             nn.ReLU(),
@@ -22,46 +21,32 @@ class Actor(nn.Module):
             nn.AdaptiveAvgPool2d(1),
         )
 
-        # Position encoder
         self.pos_encoder = nn.Sequential(
             nn.Linear(3, 128), nn.ReLU(), nn.Linear(128, 128)
         )
 
-        # Shared network
         self.shared_net = nn.Sequential(
             nn.Linear(256 + 128, 512), nn.ReLU(), nn.Linear(512, 256), nn.ReLU()
         )
 
-        # Action output layer
-        self.action_layer = nn.Linear(256, output_dim)
+        self.action_head = nn.Linear(256, 2)
 
     def forward(self, coverage, position):
-        # Ensure the input is 4D (batch, channel, height, width)
-        if coverage.dim() == 5:
-            coverage = coverage.squeeze(1)
-        elif coverage.dim() == 3:
-            coverage = coverage.unsqueeze(0)
-
         batch_size = coverage.size(0)
-
-        # Extract features from coverage and position
         cov_features = self.conv_layers(coverage).view(batch_size, -1)
         pos_features = self.pos_encoder(position)
-
-        # Combine features
         combined = torch.cat([cov_features, pos_features], dim=1)
         shared_out = self.shared_net(combined)
 
-        # Generate action
-        action = torch.tanh(self.action_layer(shared_out))
-        return action
+        # Output actions in the range [-1, 1]
+        actions = torch.tanh(self.action_head(shared_out))
+        return actions
 
 
 class Critic(nn.Module):
-    def __init__(self, input_dim, action_dim):
+    def __init__(self):
         super().__init__()
 
-        # Coverage feature extraction
         self.conv_layers = nn.Sequential(
             nn.Conv2d(1, 64, 5, stride=2),
             nn.ReLU(),
@@ -72,145 +57,199 @@ class Critic(nn.Module):
             nn.AdaptiveAvgPool2d(1),
         )
 
-        # Position encoder
         self.pos_encoder = nn.Sequential(
             nn.Linear(3, 128), nn.ReLU(), nn.Linear(128, 128)
         )
 
-        # Q-value network
-        self.q_network = nn.Sequential(
-            nn.Linear(256 + 128 + action_dim, 512),
-            nn.ReLU(),
-            nn.Linear(512, 256),
-            nn.ReLU(),
-            nn.Linear(256, 1),
+        self.action_encoder = nn.Sequential(nn.Linear(2, 64), nn.ReLU())
+
+        self.shared_net = nn.Sequential(
+            nn.Linear(256 + 128 + 64, 512), nn.ReLU(), nn.Linear(512, 256), nn.ReLU()
         )
 
+        self.value_head = nn.Linear(256, 1)
+
     def forward(self, coverage, position, action):
-        # Ensure the input is 4D (batch, channel, height, width)
-        if coverage.dim() == 5:
-            coverage = coverage.squeeze(1)
-        elif coverage.dim() == 3:
-            coverage = coverage.unsqueeze(0)
-
         batch_size = coverage.size(0)
-
-        # Extract features from coverage and position
         cov_features = self.conv_layers(coverage).view(batch_size, -1)
         pos_features = self.pos_encoder(position)
+        action_features = self.action_encoder(action)
 
-        # Combine features with action
-        combined = torch.cat([cov_features, pos_features, action], dim=1)
-        q_value = self.q_network(combined)
+        combined = torch.cat([cov_features, pos_features, action_features], dim=1)
+        shared_out = self.shared_net(combined)
 
-        return q_value
+        value = self.value_head(shared_out)
+        return value
+
+
+class OUNoise:
+    """Ornstein-Uhlenbeck process for exploration"""
+
+    def __init__(self, action_dimension, mu=0, theta=0.15, sigma=0.2):
+        self.action_dimension = action_dimension
+        self.mu = mu
+        self.theta = theta
+        self.sigma = sigma
+        self.state = np.ones(self.action_dimension) * self.mu
+        self.reset()
+
+    def reset(self):
+        self.state = np.ones(self.action_dimension) * self.mu
+
+    def sample(self):
+        x = self.state
+        dx = self.theta * (self.mu - x) + self.sigma * np.random.randn(len(x))
+        self.state = x + dx
+        return self.state
+
+
+class ReplayBuffer:
+    def __init__(self, capacity):
+        self.capacity = capacity
+        self.buffer = []
+        self.position = 0
+
+    def push(
+        self, coverage, position, action, reward, next_coverage, next_position, done
+    ):
+        if len(self.buffer) < self.capacity:
+            self.buffer.append(None)
+        self.buffer[self.position] = (
+            coverage,
+            position,
+            action,
+            reward,
+            next_coverage,
+            next_position,
+            done,
+        )
+        self.position = (self.position + 1) % self.capacity
+
+    def sample(self, batch_size):
+        batch = random.sample(self.buffer, batch_size)
+        coverage, position, action, reward, next_coverage, next_position, done = map(
+            np.stack, zip(*batch)
+        )
+        return coverage, position, action, reward, next_coverage, next_position, done
+
+    def __len__(self):
+        return len(self.buffer)
 
 
 class DDPG:
-    def __init__(
-        self, env, actor_lr=1e-4, critic_lr=1e-3, gamma=0.99, tau=0.001, noise_std=0.1
-    ):
+    def __init__(self, env):
         self.env = env
-        self.action_dim = env.action_space.shape[0]
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.actor = Actor()
+        self.actor_target = Actor()
+        self.critic = Critic()
+        self.critic_target = Critic()
 
-        # Networks
-        self.actor = Actor(1, self.action_dim).to(self.device)
-        self.actor_target = copy.deepcopy(self.actor).to(self.device)
-        self.critic = Critic(1, self.action_dim).to(self.device)
-        self.critic_target = copy.deepcopy(self.critic).to(self.device)
+        # Copy parameters to target networks
+        self.actor_target.load_state_dict(self.actor.state_dict())
+        self.critic_target.load_state_dict(self.critic.state_dict())
 
-        # Optimizers
-        self.actor_optimizer = optim.Adam(self.actor.parameters(), lr=actor_lr)
-        self.critic_optimizer = optim.Adam(self.critic.parameters(), lr=critic_lr)
+        self.actor_optimizer = optim.Adam(self.actor.parameters(), lr=1e-4)
+        self.critic_optimizer = optim.Adam(self.critic.parameters(), lr=1e-3)
 
-        # Hyperparameters
-        self.gamma = gamma
-        self.tau = tau
-        self.noise_std = noise_std
+        self.noise = OUNoise(self.env.action_space.shape[0])
 
-    def act(self, coverage, position, explore=True):
+        self.gamma = 0.99
+        self.tau = 0.001  # Target network update rate
+
+    def select_action(self, coverage, position, evaluate=False):
+        coverage = torch.FloatTensor(coverage).unsqueeze(0)
+        position = torch.FloatTensor(position).unsqueeze(0)
+
+        self.actor.eval()
         with torch.no_grad():
-            # Reshape coverage to 2D grid
-            coverage_grid = coverage.reshape(self.env.resolution, self.env.resolution)
+            action = self.actor(coverage, position).cpu().numpy()[0]
+        self.actor.train()
 
-            # Ensure correct input shape for coverage
-            coverage_tensor = torch.FloatTensor(coverage_grid).unsqueeze(0).unsqueeze(0)
+        if not evaluate:
+            noise = self.noise.sample()
+            action = action + noise
 
-            # Ensure correct input shape for position
-            position_tensor = torch.FloatTensor(position).unsqueeze(0)
+        # Scale from [-1, 1] to environment action space
+        action_low = self.env.action_space.low
+        action_high = self.env.action_space.high
+        scaled_action = action_low + (action + 1.0) * 0.5 * (action_high - action_low)
+        scaled_action = np.clip(scaled_action, action_low, action_high)
 
-            action = self.actor(coverage_tensor, position_tensor).squeeze(0).numpy()
-
-            # Add exploration noise
-            if explore:
-                noise = np.random.normal(0, self.noise_std, size=self.action_dim)
-                action = np.clip(
-                    action + noise,
-                    self.env.action_space.low,
-                    self.env.action_space.high,
-                )
-
-            return action
+        return scaled_action
 
     def update(self, batch):
-        # Reshape coverage grids
+        # Process batch data
+        (
+            coverages,
+            positions,
+            actions,
+            rewards,
+            next_coverages,
+            next_positions,
+            dones,
+        ) = batch
+
+        # Fix tensor dimensions - remove the extra dimension that's causing the error
         coverages = torch.FloatTensor(
-            [
-                b["coverage"].reshape(self.env.resolution, self.env.resolution)
-                for b in batch
-            ]
-        ).unsqueeze(1)
-
+            coverages
+        )  # Shape should be [batch_size, 1, 50, 50]
+        positions = torch.FloatTensor(positions)
+        actions = torch.FloatTensor(actions)
+        rewards = torch.FloatTensor(rewards).unsqueeze(1)
         next_coverages = torch.FloatTensor(
-            [
-                b["next_coverage"].reshape(self.env.resolution, self.env.resolution)
-                for b in batch
-            ]
-        ).unsqueeze(1)
+            next_coverages
+        )  # Shape should be [batch_size, 1, 50, 50]
+        next_positions = torch.FloatTensor(next_positions)
+        dones = torch.FloatTensor(dones).unsqueeze(1)
 
-        # Unpack other batch components
-        positions = torch.FloatTensor(np.array([b["position"] for b in batch]))
-        actions = torch.FloatTensor(np.array([b["action"] for b in batch]))
-        rewards = torch.FloatTensor(np.array([b["reward"] for b in batch]))
-        next_positions = torch.FloatTensor(
-            np.array([b["next_position"] for b in batch])
-        )
-        dones = torch.FloatTensor(np.array([b["done"] for b in batch]))
-
-        # Critic Update
+        # Compute the target Q value
         with torch.no_grad():
             next_actions = self.actor_target(next_coverages, next_positions)
-            next_q_values = self.critic_target(
-                next_coverages, next_positions, next_actions
-            )
-            target_q_values = (
-                rewards + (1 - dones) * self.gamma * next_q_values.squeeze()
-            )
+            target_q = self.critic_target(next_coverages, next_positions, next_actions)
+            target_q = rewards + (1 - dones) * self.gamma * target_q
 
-        current_q_values = self.critic(coverages, positions, actions)
-        critic_loss = F.mse_loss(current_q_values, target_q_values.unsqueeze(1))
+        # Get current Q estimate
+        current_q = self.critic(coverages, positions, actions)
 
+        # Compute critic loss
+        critic_loss = F.mse_loss(current_q, target_q)
+
+        # Optimize the critic
         self.critic_optimizer.zero_grad()
         critic_loss.backward()
         self.critic_optimizer.step()
 
-        # Actor Update
-        predicted_actions = self.actor(coverages, positions)
-        actor_loss = -self.critic(coverages, positions, predicted_actions).mean()
+        # Compute actor loss
+        actor_actions = self.actor(coverages, positions)
+        actor_loss = -self.critic(coverages, positions, actor_actions).mean()
 
+        # Optimize the actor
         self.actor_optimizer.zero_grad()
         actor_loss.backward()
         self.actor_optimizer.step()
 
-        # Soft update of target networks
-        self._soft_update(self.actor, self.actor_target)
-        self._soft_update(self.critic, self.critic_target)
+        # Update target networks
+        self._update_target_networks()
 
-    def _soft_update(self, network, target_network):
-        for param, target_param in zip(
-            network.parameters(), target_network.parameters()
+    def _update_target_networks(self):
+        # Update target networks using Polyak averaging
+        for target_param, param in zip(
+            self.actor_target.parameters(), self.actor.parameters()
         ):
             target_param.data.copy_(
                 self.tau * param.data + (1.0 - self.tau) * target_param.data
             )
+
+        for target_param, param in zip(
+            self.critic_target.parameters(), self.critic.parameters()
+        ):
+            target_param.data.copy_(
+                self.tau * param.data + (1.0 - self.tau) * target_param.data
+            )
+
+    def act(self, coverage, position):
+        # Reshape coverage to match expected dimensions
+        coverage = coverage.reshape(1, 1, 50, 50)
+        position = position.reshape(1, -1)
+
+        return self.select_action(coverage, position)
