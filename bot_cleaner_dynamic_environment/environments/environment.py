@@ -5,13 +5,13 @@ from gym import spaces
 import matplotlib.pyplot as plt
 from matplotlib.patches import Circle, Rectangle
 import random
-from bot_cleaner_dynamic_environment.environments.dynamic_walls import get_walls
+from bot_cleaner_dynamic_environment.environments.dynamic_walls import get_walls,visualize_walls
 
 class ContinuousVacuumCleanerEnv(gym.Env):
     
     metadata = {"render.modes": ["human", "rgb_array"]}
 
-    def __init__(self, size=10.0, resolution=50, coverage_radius=0.5, max_steps=2000):
+    def __init__(self, size=10.0, resolution=50, coverage_radius=0.5, max_steps=500):
         super().__init__()
         self.size = size
         self.resolution = resolution
@@ -45,10 +45,21 @@ class ContinuousVacuumCleanerEnv(gym.Env):
         self.reset()
 
     def reset(self):
-        self.agent_position = np.array([self.size/2, self.size/2], dtype=np.float32)
-        self.agent_orientation = np.random.uniform(-np.pi, np.pi)
         # self.coverage_grid = np.zeros((self.resolution, self.resolution), dtype=np.float32)
         self.coverage_grid= get_walls(main_grid_size=self.resolution, wall_size=3)
+
+        # Keep trying random positions until a free spot is found
+        while True:
+            x = np.random.uniform(0, self.size)
+            y = np.random.uniform(0, self.size)
+            grid_x = int(x / self.cell_size)
+            grid_y = int(y / self.cell_size)
+            if self.coverage_grid[grid_y, grid_x] == 0:
+                break
+
+        self.agent_position = np.array([x, y], dtype=np.float32)
+        self.agent_orientation = np.random.uniform(-np.pi, np.pi)
+
         self.steps = 0
         self.coverage_percentage = 0.0
         self._update_coverage()
@@ -57,16 +68,38 @@ class ContinuousVacuumCleanerEnv(gym.Env):
     def step(self, action):
         action = np.clip(action, self.action_space.low, self.action_space.high)
         lin_vel, ang_vel = action
-        self.agent_orientation = ((self.agent_orientation + ang_vel * self.dt + np.pi)
-                                 % (2 * np.pi)) - np.pi
-        delta_x = lin_vel * math.cos(self.agent_orientation) * self.dt
-        delta_y = lin_vel * math.sin(self.agent_orientation) * self.dt
+        # print(action)
+        new_theta = ((self.agent_orientation + ang_vel * self.dt + np.pi) % (2 * np.pi)) - np.pi
+
+        delta_x = lin_vel * math.cos(new_theta) * self.dt
+        delta_y = lin_vel * math.sin(new_theta) * self.dt
         new_pos = self.agent_position + np.array([delta_x, delta_y])
-        self.agent_position = np.clip(new_pos, [0, 0], [self.size, self.size])
-        newly_covered, _ = self._update_coverage()
-        reward = self._calculate_reward(newly_covered)
+
+        # Convert to grid cell
+        grid_x = int(new_pos[0] / self.cell_size)
+        grid_y = int(new_pos[1] / self.cell_size)
+
+        # Check wall collision
+        collision = (
+            grid_x < 0 or grid_x >= self.resolution or
+            grid_y < 0 or grid_y >= self.resolution or
+            self.coverage_grid[grid_y, grid_x] == -1
+        )
+
+        if not collision:
+            self.agent_position = np.clip(new_pos, [0, 0], [self.size, self.size])
+            self.agent_orientation = new_theta
+            newly_covered, _ = self._update_coverage()
+            reward = self._calculate_reward(newly_covered)
+        else:
+            reward = -10.0  # Negative reward for bumping into a wall
+            done = True
+
         self.steps += 1
         done = self.coverage_percentage >= 0.95 or self.steps >= self.max_steps
+        # plt = visualize_walls(self.coverage_grid)
+        # plt.pause(0.2)
+        # plt.close()
         return self._get_observation(), reward, done, {
             "coverage_percentage": self.coverage_percentage,
             "steps": self.steps
@@ -74,32 +107,30 @@ class ContinuousVacuumCleanerEnv(gym.Env):
 
     def _update_coverage(self):
         agent_x, agent_y = self.agent_position
-        # print(self.agent_position)
-        # print(self.cell_size)
-        # print(self.coverage_radius)
-        # print(f"resolution : {self.resolution}")
         min_x = max(0, int((agent_x - self.coverage_radius) / self.cell_size))
-        max_x = min(self.resolution-1, int((agent_x + self.coverage_radius) / self.cell_size))
+        max_x = min(self.resolution - 1, int((agent_x + self.coverage_radius) / self.cell_size))
         min_y = max(0, int((agent_y - self.coverage_radius) / self.cell_size))
-        max_y = min(self.resolution-1, int((agent_y + self.coverage_radius) / self.cell_size))
-        # print(f"{min_x} , {max_x} , {min_y} , {max_y}")
+        max_y = min(self.resolution - 1, int((agent_y + self.coverage_radius) / self.cell_size))
 
         newly_covered = 0
-        for i in range(min_x, max_x+1):
-            for j in range(min_y, max_y+1):
-                # print(i,j)
+        for i in range(min_x, max_x + 1):
+            for j in range(min_y, max_y + 1):
                 cell_x = (i + 0.5) * self.cell_size
                 cell_y = (j + 0.5) * self.cell_size
                 distance = (cell_x - agent_x)**2 + (cell_y - agent_y)**2
 
                 if distance <= self.coverage_radius**2:
                     if self.coverage_grid[j, i] == 0:
+                        self.coverage_grid[j, i] = 1  # Mark as cleaned
                         newly_covered += 1
-                    self.coverage_grid[j, i] = 1
-                    print("cleaned")
 
-        self.coverage_percentage = np.sum(self.coverage_grid) / (self.resolution**2)
+        # Exclude wall cells (-1) when computing coverage percentage
+        cleanable_cells = np.sum(self.coverage_grid != -1)
+        cleaned_cells = np.sum(self.coverage_grid == 1)
+        self.coverage_percentage = cleaned_cells / cleanable_cells if cleanable_cells > 0 else 0
+
         return newly_covered, (max_x - min_x + 1) * (max_y - min_y + 1)
+
 
     def _calculate_reward(self, newly_covered):
         center = np.array([self.size/2, self.size/2])
@@ -110,28 +141,50 @@ class ContinuousVacuumCleanerEnv(gym.Env):
             max(0, int((self.agent_position[0]-1)/self.cell_size)) :
             min(self.resolution, int((self.agent_position[0]+1)/self.cell_size))
         ])
+        
+        # Determine current grid cell
+        cell_x = np.clip(int(self.agent_position[0] / self.cell_size), 0, self.resolution - 1)
+        cell_y = np.clip(int(self.agent_position[1] / self.cell_size), 0, self.resolution - 1)
+        # Check if agent is staying in a covered cell (not wall)
+        is_in_covered_cell = self.coverage_grid[cell_y, cell_x] == 1
+
+        
+
         return (
-            newly_covered * 2.0 +
-            dist_from_center * 0.05 +
-            (1 - recent_coverage) * 0.1 -
-            0.01 * (newly_covered == 0) -
-            0.005 +
-            (100 if self.coverage_percentage >= 0.95 else 0)
+            newly_covered * 2.0
+            # dist_from_center * 0.05 +
+            # +(1 - recent_coverage) * 0.1 
+            -0.1 * (newly_covered == 0) 
+            - 0.5 * is_in_covered_cell
+            -0.005 
+            +(100 if self.coverage_percentage >= 0.95 else 0)
         )
 
     def render(self, mode="human"):
         if self.fig is None:
-            self.fig, self.ax = plt.subplots(figsize=(8,8))
+            self.fig, self.ax = plt.subplots(figsize=(8, 8))
             plt.ion()
         self.ax.clear()
+
+        # Ensure discrete integer values for rendering
+        display_grid = np.full_like(self.coverage_grid, 0)  # Start with all uncleaned = 0 (white)
+        display_grid[self.coverage_grid == 1] = 1            # Cleaned = 1 (blue)
+        display_grid[self.coverage_grid == -1] = 2           # Wall = 2 (black)
+
+        from matplotlib import colors
+        cmap = colors.ListedColormap(["white", "blue", "black"])  # 0, 1, 2
+        bounds = [-0.5, 0.5, 1.5, 2.5]
+        norm = colors.BoundaryNorm(bounds, cmap.N)
+
         self.ax.imshow(
-            self.coverage_grid,
+            display_grid,
             extent=[0, self.size, 0, self.size],
             origin="lower",
-            cmap="Blues",
-            vmin=0,
-            vmax=1
+            cmap=cmap,
+            norm=norm
         )
+
+        # Draw agent
         agent_circle = Circle(
             self.agent_position,
             radius=self.coverage_radius,
@@ -141,21 +194,27 @@ class ContinuousVacuumCleanerEnv(gym.Env):
         )
         self.ax.add_patch(agent_circle)
 
-        self.ax.add_patch(Circle((0,0),radius=0.1))
-        self.ax.add_patch(Circle((5,5),radius=0.1))
-        self.ax.add_patch(Circle((10,10),radius=0.1))
+        # Reference points (optional)
+        # self.ax.add_patch(Circle((0, 0), radius=0.1))
+        # self.ax.add_patch(Circle((5, 5), radius=0.1))
+        # self.ax.add_patch(Circle((10, 10), radius=0.1))
 
+        # Draw orientation
         end_x = self.agent_position[0] + self.coverage_radius * 1.5 * math.cos(self.agent_orientation)
         end_y = self.agent_position[1] + self.coverage_radius * 1.5 * math.sin(self.agent_orientation)
         self.ax.plot([self.agent_position[0], end_x], [self.agent_position[1], end_y], 'k-')
+
+        # Display text
         self.ax.text(0.05, 0.95,
                     f"Coverage: {self.coverage_percentage:.2%}\nSteps: {self.steps}/{self.max_steps}",
                     transform=self.ax.transAxes,
                     fontsize=12,
                     verticalalignment='top')
+
         self.ax.set_xlim(0, self.size)
         self.ax.set_ylim(0, self.size)
         plt.pause(0.01)
+
 
     def close(self):
         if self.fig:

@@ -3,6 +3,7 @@ import numpy as np
 import torch
 from bot_cleaner_dynamic_environment.environments.environment import ContinuousVacuumCleanerEnv, SimpleWallEnv
 from bot_cleaner_dynamic_environment.algos.sac import SAC, ReplayBuffer  # Import from your SAC implementation
+import os
 
 def preprocess_observation(obs: dict) -> np.ndarray:
     """Flatten environment observation into state vector."""
@@ -45,9 +46,14 @@ def train():
 
             while not done:
                 # Environment interaction
+                # print(state.shape, state)
                 action = agent.get_action(state)
-                next_obs, reward, done, _ = env.step(action)
+                next_obs, reward, done, info = env.step(action)
                 next_state = preprocess_observation(next_obs)
+
+                    # Print reward and clear screen for next step
+                # os.system('cls' if os.name == 'nt' else 'clear')  # Clear terminal
+                print(f"Step: {info['steps']}, Reward: {reward:.3f}, Coverage: {info['coverage_percentage']:.2%}, Action: {action}")
 
                 # Store experience
                 buffer.push(state, action, reward, next_state, done)
