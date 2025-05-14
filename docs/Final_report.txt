@@ -1,0 +1,28 @@
+Final Demo Presentation Requirements
+In your presentation, include any necessary figures, graphs, screenshots, or videos that illustrate the experiments, results, and findings. This will help in explaining your work more effectively. Ensure that the demo includes a video or screenshots of your code running, showing the execution of the experiments.
+
+Make sure to cover the following key points in your final demo:
+
+Recap of Previous Milestones: Begin with a brief recap of what you have accomplished in the earlier stages of the project. Summarize key points from your earlier milestones, including:
+What you have already completed in previous milestones
+Major feedbacks received from other teams and/or professor in previous milestones and how you’ve made adjustments and improvements to address them
+Replicated Experiments: For each experiment that you have replicated from the paper, you will need to provide the following details:
+Purpose and Setup: Explain the goal of the experiment, why it was conducted in the original paper, and how you set it up. Include information about the simulation environment or datasets used, including interface details or dataset format if any.
+Interpreting Results: Show how to interpret the experiment's outputs, figures, or tables. Describe the performance metric used to evaluate the results, and outline the different aspects being compared.
+Comparing Results: Present the original results from the paper and your own results. Are they similar? Highlight any differences and offer potential reasons for these discrepancies.
+Experiment Duration: Indicate how long each experiment took to run and any notable challenges encountered while replicating it.
+Lessons Learned: Reflect on key takeaways from the replication process, including any challenges or surprises, and how you overcame them.
+New Experiments: For each new experiment you conducted beyond those in the original paper, discuss them in a similar manner:
+Purpose and Setup: Explain the purpose of your new experiments and how they were designed. What hypothesis were you testing? How did you modify the original experiments or methods to conduct this new experiment?
+Interpreting Results: Describe how to interpret the results of your new experiments, including the performance metric used and how the results compare to the original benchmarks or insights.
+Findings and Analysis: Present your findings, highlight any new insights gained from your experiments, and discuss their significance.
+Experiment Duration: Indicate the time taken to run the new experiments and describe any technical or methodological challenges you faced.
+Lessons Learned: Reflect on what you learned from the new experiments, including any adjustments or improvements you would make in the future.
+Incomplete Experiments If there are any experiments (replicated or new) that you have not finished before this presentation, provide the following:
+Purpose: Explain the goal of the experiment and its importance within the context of the project.
+Setup: Outline how you plan to set up the experiment, including the necessary steps and resources.
+Future Inclusion: State how you will include the results in your final report and the importance of these results to the overall findings of your project.
+Project Reflections and Future Applications
+Key Learnings: Summarize what you’ve learned throughout the project. Reflect on both the technical skills you’ve acquired and any broader insights related to reinforcement learning (RL) and the application you studied.
+Applying RL to Real-World Problems: If you were to apply RL to a real-world problem in the future, what would you need to pay attention to? Discuss any practical insights, challenges, or considerations that might arise when moving from theory to real-world implementation.
+Final Thoughts: Share any closing thoughts or additional insights. Feel free to mention anything you'd like to share with the class about your experience, challenges, or takeaways from the project.
