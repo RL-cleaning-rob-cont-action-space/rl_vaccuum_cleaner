@@ -153,9 +153,15 @@ class EnhancedVacuumCleanerEnv(gym.Env):
 
     def _is_valid_move(self, position):
         """Check if the proposed position is valid (within bounds and not in a wall)"""
+        # First check exact boundary conditions (continuous space)
+        if (position[0] < 0 or position[0] >= self.size_x or 
+            position[1] < 0 or position[1] >= self.size_y):
+            return False
+            
+        # Now check for walls using grid coordinates
         x, y = int(position[0]), int(position[1])
-
-        # Check boundary conditions
+        
+        # Double-check to be safe
         if x < 0 or x >= self.size_x or y < 0 or y >= self.size_y:
             return False
 
@@ -179,6 +185,10 @@ class EnhancedVacuumCleanerEnv(gym.Env):
         delta_x = lin_vel * math.cos(self.agent_orientation) * 0.1
         delta_y = lin_vel * math.sin(self.agent_orientation) * 0.1
         new_pos = self.agent_position + np.array([delta_x, delta_y])
+        
+        # Clip the position to be within boundaries before checking validity
+        new_pos[0] = np.clip(new_pos[0], 0, self.size_x - 0.001)
+        new_pos[1] = np.clip(new_pos[1], 0, self.size_y - 0.001)
 
         # Validate move
         if self._is_valid_move(new_pos):
