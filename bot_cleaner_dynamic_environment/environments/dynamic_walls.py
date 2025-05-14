@@ -90,3 +90,6 @@ def get_walls(main_grid_size, wall_size):
     # print(f"grid shape : {walls.shape}")
     # print(f"grid shape : {scaled_walls.shape}")
     return scaled_walls
+
+if __name__ == "__main__":
+    get_walls(5,1)

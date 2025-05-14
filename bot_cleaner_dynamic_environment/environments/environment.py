@@ -59,6 +59,8 @@ class ContinuousVacuumCleanerEnv(gym.Env):
 
         self.agent_position = np.array([x, y], dtype=np.float32)
         self.agent_orientation = np.random.uniform(-np.pi, np.pi)
+        self.agent_previous_orientation = self.agent_orientation
+        self.agent_previous_position = self.agent_position
 
         self.steps = 0
         self.coverage_percentage = 0.0
@@ -148,7 +150,17 @@ class ContinuousVacuumCleanerEnv(gym.Env):
         # Check if agent is staying in a covered cell (not wall)
         is_in_covered_cell = self.coverage_grid[cell_y, cell_x] == 1
 
+
+        moved_distance = np.linalg.norm(self.agent_position - self.agent_previous_position)
+        self.agent_previous_position = self.agent_position  # Update for next step
+        speed_reward = moved_distance * 0.5  # Adjust 0.5 to make it stronger/weaker
         
+        # Angle difference (assume angles in radians)
+        angular_change = np.abs(self.agent_orientation - self.agent_previous_orientation)
+        # Normalize angle to [0, π] if needed (avoid jump at ±π)
+        angular_change = min(angular_change, 2*np.pi - angular_change)
+        # Update for next step
+        self.agent_previous_orientation = self.agent_orientation
 
         return (
             newly_covered * 2.0
@@ -157,6 +169,8 @@ class ContinuousVacuumCleanerEnv(gym.Env):
             -0.1 * (newly_covered == 0) 
             - 0.5 * is_in_covered_cell
             -0.005 
+            + speed_reward
+            - angular_change * 4.0
             +(100 if self.coverage_percentage >= 0.95 else 0)
         )
 
