@@ -1,0 +1,93 @@
+from bot_cleaner_static_obstacles.environments.environment import GridMazeVacuumCleanerEnv
+from bot_cleaner_static_obstacles.algos.ddpg import DDPG
+import torch
+import numpy as np
+import time
+
+def evaluate(env, agent, episodes=3, model_path="./bot_cleaner_static_obstacles/models/ddpg/final_model.pth", render=True):
+    """
+    Evaluate the trained DDPG agent on the environment.
+
+    Args:
+        env: The environment to evaluate in
+        agent: The DDPG agent
+        episodes: Number of evaluation episodes
+        model_path: Path to the saved model weights
+        render: Whether to render the environment
+    """
+    # Load the trained model
+    checkpoint = torch.load(model_path)
+    agent.actor.load_state_dict(checkpoint['actor_state_dict'])
+    agent.actor.eval()  # Set to evaluation mode
+
+    # Evaluation statistics
+    ep_rewards = []
+    ep_coverages = []
+    ep_lengths = []
+
+    for episode in range(1, episodes + 1):
+        obs = env.reset()
+        done = False
+        total_reward = 0
+        start_time = time.time()
+
+        while not done:
+            if render:
+                env.render()
+                time.sleep(0.02)  # Slow down for visualization
+
+            # Get deterministic action (without exploration noise)
+            with torch.no_grad():
+                coverage = torch.FloatTensor(obs["coverage"]).view(1, env.size_y, env.size_x).to(agent.device)
+                walls = torch.FloatTensor(obs["walls"]).view(1, env.size_y, env.size_x).to(agent.device)
+                position = torch.FloatTensor(obs["position"]).view(1, -1).to(agent.device)
+
+                action = agent.actor(coverage, walls, position)
+                action = action.cpu().numpy()[0]
+                action = np.clip(action, env.action_space.low, env.action_space.high)
+
+            # Step the environment
+            next_obs, reward, done, info = env.step(action)
+
+            total_reward += reward
+            obs = next_obs
+
+        # Calculate episode statistics
+        ep_time = time.time() - start_time
+        coverage = info['coverage_percentage']
+        steps = info['steps']
+
+        # Save statistics
+        ep_rewards.append(total_reward)
+        ep_coverages.append(coverage)
+        ep_lengths.append(steps)
+
+        # Print episode summary
+        print(f"Evaluation Episode {episode} | "
+              f"Coverage: {coverage:.2%} | "
+              f"Steps: {steps:4d}/{env.max_steps} | "
+              f"Reward: {total_reward:7.2f} | "
+              f"Time: {ep_time:.2f}s")
+
+    # Print evaluation summary
+    print("\nEvaluation Complete:")
+    print(f"Average Coverage: {np.mean(ep_coverages):.2%}")
+    print(f"Average Reward: {np.mean(ep_rewards):.2f}")
+    print(f"Average Episode Length: {np.mean(ep_lengths):.1f} steps")
+
+    env.close()
+
+if __name__ == "__main__":
+    # Initialize environment and agent
+    env = GridMazeVacuumCleanerEnv(size_x=25, size_y=15, max_steps=1000)
+    agent = DDPG(env)
+
+    # Run evaluation
+    evaluate(
+        env,
+        agent,
+        episodes=3,
+        model_path="bot_cleaner_static_obstacles/models/ddpg/final_model.pth",
+        render=True
+    )
+    
