@@ -256,30 +256,51 @@ def train() -> None:
     state_dim = 50 * 50 + 3
     action_dim = env.action_space.shape[0]
     action_range = (env.action_space.low, env.action_space.high)
-    agent = SACAgent(state_dim, action_dim, action_range)
-    buffer = ReplayBuffer(100000)
+
+    # Agent and buffer initialization
+    agent = SAC(
+        state_dim=state_dim,
+        action_dim=action_dim,
+        action_range=action_range,
+        device='cuda' if torch.cuda.is_available() else 'cpu'
+    )
+    buffer = ReplayBuffer(capacity=100000)
+
+    # Training parameters
     max_episodes = 1000
     batch_size = 256
     print_interval = 10
-    render_enabled = True  # Add rendering flag
+    render = True  # Set to False for faster training
+
     try:
+        # Training loop
         for episode in range(max_episodes):
             obs = env.reset()
             state = preprocess_observation(obs)
-            total_reward = 0.0
+            total_reward = 0
             done = False
+
             while not done:
+                # Environment interaction
                 action = agent.get_action(state)
                 next_obs, reward, done, _ = env.step(action)
                 next_state = preprocess_observation(next_obs)
+
+                # Store experience
                 buffer.push(state, action, reward, next_state, done)
                 total_reward += reward
                 state = next_state
-                if render_enabled:  # Add rendering condition
+
+                # Render if enabled
+                if render:
                     env.render()
+
+                # Update agent
                 if len(buffer) >= batch_size:
                     batch = buffer.sample(batch_size)
-                    agent.update(batch)
+                    agent.update_parameters(batch)
+
+            # Logging
             if episode % print_interval == 0:
                 print(
                     f"Episode {episode} | "
