@@ -1,19 +1,34 @@
-from bot_cleaner_basic_coverage.environments.environment import ContinuousVacuumCleanerEnv
-from bot_cleaner_basic_coverage.algos.ppo import PPO
+"""Training script for Proximal Policy Optimization (PPO) vacuum cleaner agent."""
+import numpy as np
 import torch
+from bot_cleaner_dynamic_environment.environments.environment import ContinuousVacuumCleanerEnv, SimpleWallEnv
+from bot_cleaner_dynamic_environment.algos.ppo import PPO
+import os
 
-def main():
-    env = ContinuousVacuumCleanerEnv(size=5.0, max_steps=2000)
+def preprocess_observation(obs: dict) -> tuple:
+    """Process observation for PPO network input."""
+    coverage = obs['coverage'].reshape(1, 1, 50, 50)
+    position = obs['position'].reshape(1, -1)
+    return coverage, position
+
+def train():
+    # Environment setup
+    env = ContinuousVacuumCleanerEnv(size=5.0, coverage_radius=0.5)
     agent = PPO(env)
 
+    # Training parameters
     max_episodes = 1000
     update_interval = 500
-    best_coverage = 0
+    print_interval = 10
+    save_interval = 100
     size_increments = [(200, 7.0), (400, 8.0), (600, 9.0), (800, 10.0)]
-    render_enabled = True  # Flag to control rendering
+    render = True
+    best_coverage = 0
 
     try:
+        # Training loop
         for episode in range(max_episodes):
+            # Update environment size based on current episode
             current_size = 5.0
             for threshold, size in size_increments:
                 if episode >= threshold:
@@ -28,15 +43,8 @@ def main():
             rollout = []
 
             while not done:
-                # Render the environment
-                if render_enabled:
-                    env.render()
-
-                # Preprocess observations
-                coverage = obs['coverage'].reshape(1, 1, 50, 50)
-                position = obs['position'].reshape(1, -1)
-
-                # Get action
+                # Environment interaction
+                coverage, position = preprocess_observation(obs)
                 action, log_prob, value = agent.act(coverage, position)
                 next_obs, reward, done, info = env.step(action)
 
@@ -51,33 +59,56 @@ def main():
                     'value': value
                 })
 
+                # Print step information
+                print(f"Step: {info['steps']}, Reward: {reward:.3f}, "
+                      f"Coverage: {info['coverage_percentage']:.2%}, "
+                      f"Action: {action}")
+
                 total_reward += reward
                 obs = next_obs
 
+                # Render if enabled
+                if render:
+                    env.render()
+
                 # Update if needed
                 if len(rollout) >= update_interval:
-                    agent.update(rollout)
+                    loss_stats = agent.update(rollout)
+                    print(f"Policy Loss: {loss_stats.get('policy_loss', 0):.3f}, "
+                          f"Value Loss: {loss_stats.get('value_loss', 0):.3f}")
                     rollout = []
 
-            # Final update
-            if len(rollout) > 0:
-                agent.update(rollout)
+            # Final update for episode
+            if rollout:
+                loss_stats = agent.update(rollout)
+
+            # Logging
+            if episode % print_interval == 0:
+                print(f"Episode {episode:4d} | "
+                      f"Total Reward: {total_reward:7.1f} | "
+                      f"Size: {current_size:.1f} | "
+                      f"Coverage: {info['coverage_percentage']:.2%}")
 
             # Save best model
             current_cov = info['coverage_percentage']
             if current_cov > best_coverage:
                 best_coverage = current_cov
-                torch.save(agent.policy.state_dict(), f"../../models/ppo/best_model_{best_coverage:.2f}.pth")
+                torch.save(agent.policy.state_dict(), 
+                          f"bot_cleaner_dynamic_environment/models/ppo/best_model_{best_coverage:.2f}.pth")
+                print(f"New best coverage: {best_coverage:.2%}")
 
-            print(f"Ep {episode} | Coverage: {current_cov:.2%} | "
-                f"Size: {current_size:.1f} | Reward: {total_reward:.1f}")
+            # Periodic save
+            if episode % save_interval == 0:
+                torch.save(agent.policy.state_dict(),
+                          f"bot_cleaner_dynamic_environment/models/ppo/ppo_cleaner_ep{episode}.pth")
 
     except KeyboardInterrupt:
-        print("Training stopped by user")
+        print("Training interrupted! Saving final model...")
 
-    # Save final model and close
-    torch.save(agent.policy.state_dict(), "../../models/ppo/final_model.pth")
+    # Final save and cleanup
+    torch.save(agent.policy.state_dict(), 
+              "bot_cleaner_dynamic_environment/models/ppo/ppo_cleaner_final.pth")
     env.close()
 
 if __name__ == "__main__":
-    main()
+    train()
